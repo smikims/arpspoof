@@ -1,0 +1,36 @@
+What I've done here:
+
+The raw.c file sends a simple ARP request using Linux's raw packet interface with
+socket(2) and AF_PACKET (see packet(7)). These are raw ethernet packets at the
+link layer level (level 2 of the OSI model), although Linux is wonderful enough
+that it does most of the work, including constructing the header and speaking
+ARP (although I have to tell it what to put in the ARP packet). I'm using both
+the man pages mentioned above and the following link as a guide:
+
+http://www.microhowto.info/howto/send_an_arbitrary_ethernet_frame_using_an_af_packet_socket_in_c.html
+
+The hack.sh file is a simple shell script that uses wget to fetch the target
+webpage, then inserts some JavaScript to the end of the page so that an alert
+window with the word "Hacked!" appears when the victim views it. It needs
+tweaking to work better on pages/with/long/URLs/with/slashes, but it works for
+most cases, e.g.
+
+./hack.sh google.com
+
+or
+
+./hack.sh reddit.com/r/programming
+
+The "hacked" page will be called webpage.html.
+
+In the end, I'll have myself set up as a man in the middle such that traffic on
+most ports gets passed on uninterrupted, but anything destined for port 80
+(HTTP) gets sniffed for GET requests, then I make the request, modify the page,
+and send it back.
+
+This proxying will be done with iptables and the Squid proxy server, but since
+those simply require some scattered configuration files and commands to be run
+there's not much to show in a git repository, but the method will be similar to
+what was used in the now-famous Upside-Down-Ternet prank:
+
+http://www.ex-parrot.com/pete/upside-down-ternet.html
