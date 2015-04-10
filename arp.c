@@ -11,7 +11,7 @@
 #include <netpacket/packet.h>
 #include <netinet/if_ether.h>
 
-#define DIE(format, error)                              \
+#define DIE(format, error)                      \
 	do {                                    \
 		fprintf(stderr, format, error); \
 		exit(EXIT_FAILURE);             \
