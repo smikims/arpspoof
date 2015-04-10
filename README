@@ -1,6 +1,6 @@
 What I've done here:
 
-The raw.c file sends a simple ARP request using Linux's raw packet interface with
+The arp.c file sends a simple ARP request using Linux's raw packet interface with
 socket(2) and AF_PACKET (see packet(7)). These are raw ethernet packets at the
 link layer level (level 2 of the OSI model), although Linux is wonderful enough
 that it does most of the work, including constructing the header and speaking
