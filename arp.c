@@ -14,7 +14,7 @@
 #define INTERFACE "enp4s0"
 
 #define PRINT_MAC(msg, addr)                             \
-	printf("%s:\t%02x:%02x:%02x:%02x:%02x:%02x\n",    \
+	printf("%s:\t%02x:%02x:%02x:%02x:%02x:%02x\n",   \
 			(msg),                           \
 			(unsigned char) (addr)[0],       \
 			(unsigned char) (addr)[1],       \
@@ -52,14 +52,8 @@ uint32_t get_gateway(void)
 	return ret;
 }
 
-int main(int argc, char *argv[])
+void request_mac(int fd, struct ether_arp *req, const char *ip_str)
 {
-	/* get an ARP socket */
-	int fd = socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_ARP));
-	if (fd == -1) {
-		DIE("%s\n", strerror(errno));
-	}
-
 	/* this is the name of my ethernet interface */
 	const char *if_name = INTERFACE;
 	struct ifreq ifr;
@@ -90,18 +84,19 @@ int main(int argc, char *argv[])
 	memcpy(addr.sll_addr, ether_broadcast_addr, ETHER_ADDR_LEN);
 
 	/* construct the ARP request */
-	struct ether_arp req;
-	req.arp_hrd = htons(ARPHRD_ETHER);
-	req.arp_pro = htons(ETH_P_IP);
-	req.arp_hln = ETHER_ADDR_LEN;
-	req.arp_pln = sizeof(in_addr_t);
-	req.arp_op  = htons(ARPOP_REQUEST);
+	req->arp_hrd = htons(ARPHRD_ETHER);
+	req->arp_pro = htons(ETH_P_IP);
+	req->arp_hln = ETHER_ADDR_LEN;
+	req->arp_pln = sizeof(in_addr_t);
+	req->arp_op  = htons(ARPOP_REQUEST);
 	/* zero because that's what we're asking for */
-	memset(&req.arp_tha, 0, sizeof(req.arp_tha));
+	memset(&req->arp_tha, 0, sizeof(req->arp_tha));
 
-	struct in_addr gateway_ip_addr = {0};
-	gateway_ip_addr.s_addr = get_gateway();
-	memcpy(&req.arp_tpa, &gateway_ip_addr.s_addr, sizeof(req.arp_tpa));
+	struct in_addr ip_addr = {0};
+	if (!inet_aton(ip_str, &ip_addr)) {
+		DIE("%s\n", strerror(errno));
+	}
+	memcpy(&req->arp_tpa, &ip_addr.s_addr, sizeof(req->arp_tpa));
 
 	/* now to get our hardware address */
 	if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
@@ -110,74 +105,42 @@ int main(int argc, char *argv[])
 	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
 		DIE("%s\n", "not an ethernet interface");
 	}
-	memcpy(&req.arp_sha, (unsigned char *) ifr.ifr_hwaddr.sa_data, sizeof(req.arp_sha));
+	memcpy(&req->arp_sha, (unsigned char *) ifr.ifr_hwaddr.sa_data, sizeof(req->arp_sha));
 
 	/* ...and our network address */
 	if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
 		DIE("%s\n", strerror(errno));
 	}
-	memcpy(&req.arp_spa, (unsigned char *) ifr.ifr_addr.sa_data + 2, sizeof(req.arp_spa));
+	memcpy(&req->arp_spa, (unsigned char *) ifr.ifr_addr.sa_data + 2, sizeof(req->arp_spa));
 
 	/* actually send it */
-	if (sendto(fd, &req, sizeof(req), 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
+	if (sendto(fd, req, sizeof(struct ether_arp), 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
 		DIE("%s\n", strerror(errno));
 	}
 
-	if (recv(fd, &req, sizeof(req), 0) == -1) {
+	if (recv(fd, req, sizeof(struct ether_arp), 0) == -1) {
+		DIE("%s\n", strerror(errno));
+	}
+}
+
+int main(int argc, char *argv[])
+{
+	if (argc < 2) {
+		DIE("%s\n", "Please give an IP address to attack");
+	}
+
+	/* get an ARP socket */
+	int fd = socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_ARP));
+	if (fd == -1) {
 		DIE("%s\n", strerror(errno));
 	}
 
-//	PRINT_MAC("My MAC address", ifr.ifr_hwaddr.sa_data);
+	struct ether_arp req;
+
+	request_mac(fd, &req, inet_ntoa((struct in_addr) { .s_addr = get_gateway() }));
 	PRINT_MAC("Gateway MAC address", req.arp_sha);
 
-	if (argc < 2) {
-		return 1;
-	}
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sll_family   = AF_PACKET;
-	addr.sll_ifindex  = ifindex;
-	addr.sll_halen    = ETHER_ADDR_LEN;
-	addr.sll_protocol = htons(ETH_P_ARP);
-	memcpy(addr.sll_addr, ether_broadcast_addr, ETHER_ADDR_LEN);
-
-	req.arp_hrd = htons(ARPHRD_ETHER);
-	req.arp_pro = htons(ETH_P_IP);
-	req.arp_hln = ETHER_ADDR_LEN;
-	req.arp_pln = sizeof(in_addr_t);
-	req.arp_op  = htons(ARPOP_REQUEST);
-	/* zero because that's what we're asking for */
-	memset(&req.arp_tha, 0, sizeof(req.arp_tha));
-
-	struct in_addr victim_ip_addr = {0};
-	if (!inet_aton(argv[1], &victim_ip_addr)) {
-		DIE("%s\n", strerror(errno));
-	}
-	memcpy(&req.arp_tpa, &victim_ip_addr.s_addr, sizeof(req.arp_tpa));
-
-	/* now to get our hardware address */
-	if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
-		DIE("%s\n", strerror(errno));
-	}
-	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
-		DIE("%s\n", "not an ethernet interface");
-	}
-	memcpy(&req.arp_sha, (unsigned char *) ifr.ifr_hwaddr.sa_data, sizeof(req.arp_sha));
-
-	/* ...and our network address */
-	if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
-		DIE("%s\n", strerror(errno));
-	}
-	memcpy(&req.arp_spa, (unsigned char *) ifr.ifr_addr.sa_data + 2, sizeof(req.arp_spa));
-
-	if (sendto(fd, &req, sizeof(req), 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
-		DIE("%s\n", strerror(errno));
-	}
-
-	if (recv(fd, &req, sizeof(req), 0) == -1) {
-		DIE("%s\n", strerror(errno));
-	}
-
+	request_mac(fd, &req, argv[1]);
 	PRINT_MAC("Victim MAC address", req.arp_sha);
 
 	return 0;
