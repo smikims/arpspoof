@@ -1,2 +1,8 @@
+SRC=arp.c
+OUT=arp
+CFLAGS=-Wall -Wextra -Wpedantic -std=gnu99
+
 all:
-	gcc -Wall -Wextra -Wpedantic -std=gnu99 -o arp arp.c
+	$(CC) $(CFLAGS) -o $(OUT) $(SRC)
+clean:
+	$(RM) $(OUT)

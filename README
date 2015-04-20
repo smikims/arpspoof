@@ -1,36 +1,56 @@
-What I've done here:
+What I've done:
 
-The arp.c file sends a simple ARP request using Linux's raw packet interface with
-socket(2) and AF_PACKET (see packet(7)). These are raw ethernet packets at the
-link layer level (level 2 of the OSI model), although Linux is wonderful enough
-that it does most of the work, including constructing the header and speaking
-ARP (although I have to tell it what to put in the ARP packet). I'm using both
-the man pages mentioned above and the following link as a guide:
+The arp.c file sends 2 ARP requests, one to the default gateway and one to the
+victim, to get their MAC addresses. I then use these addresses to construct a
+phony ARP response to the victim that tells them that I am their default
+gateway. Some operating systems (e.g. Linux) are very suspicious of spurious ARP
+responses like this and will quickly figure out the ruse, but Windows will
+happily chug along in blissful ignorance until you annoy it by taking too long
+to respond to requests. To prevent even this weak defense mechanism from
+deploying, the program has an option to keep resending the phony packet every X
+number of seconds. Note: if it takes more than about 1 second to print the
+second line you probably got a response from the wrong person, so try again.
 
-http://www.microhowto.info/howto/send_an_arbitrary_ethernet_frame_using_an_af_packet_socket_in_c.html
+Syntax:
 
-The hack.sh file is a simple shell script that uses wget to fetch the target
-webpage, then inserts some JavaScript to the end of the page so that an alert
-window with the word "Hacked!" appears when the victim views it. It needs
-tweaking to work better on pages/with/long/URLs/with/slashes, but it works for
-most cases, e.g.
+./arp VICTIM_IP [ TIME_INTERVAL (in seconds) ] [ -q (quiet mode) ]
 
-./hack.sh google.com
+Another note: setting the time interval to 0 means only one packet is sent
 
-or
+The sweep.sh file gets the current IP address and routing prefix in CIDR
+notation and from this calculates the netmask, then uses this information to
+ping sweep everyone on the current subnet and attempt to send phony ARP packets
+to them using the arp.c program. Obviously you shouldn't do this unless you know
+exactly who will be affected by it and you're prepared to handle the
+consequences. There is also a flag to do only the ping sweep and not attempt the
+spoofing, which prints out the IP addresses of everyone who responded in some
+fashion to the ping from the tcping program (not mine) on port 6000. For some
+reason I was unable to determine, Windows responds to random TCP connections on
+port 6000 but firewalls almost everything else, including ICMP. Go figure.
 
-./hack.sh reddit.com/r/programming
+Syntax:
 
-The "hacked" page will be called webpage.html.
+./sweep.sh INTERFACE_NAME [ -p (ping only) ]
 
-In the end, I'll have myself set up as a man in the middle such that traffic on
-most ports gets passed on uninterrupted, but anything destined for port 80
-(HTTP) gets sniffed for GET requests, then I make the request, modify the page,
-and send it back.
+There are also some other relevant things, for example the sample website is
+available under the http directory, and the Apache and Squid configuration files
+are here as well. And one more thing that doesn't really fit neatly anywhere
+else: the iptables rule to redirect the traffic. By default Linux just forwards
+any IP packets destined for elsewhere, so the ARP spoof by itself won't really
+affect anything other than making the victim's packets pass through your
+machine. However, since it's *your* machine, you can have your way with them, so
+we set up iptables to redirect anything coming through port 80 to port 3129 on
+our machine, which Apache is listening on as well as Squid (just make sure
+you've set them up not to conflict if you're running both). Note that HTTPS
+(port 443) is significantly harder to mess with, so I don't try.
 
-This proxying will be done with iptables and the Squid proxy server, but since
-those simply require some scattered configuration files and commands to be run
-there's not much to show in a git repository, but the method will be similar to
-what was used in the now-famous Upside-Down-Ternet prank:
+iptables rule (run as root):
 
-http://www.ex-parrot.com/pete/upside-down-ternet.html
+iptables -t nat -A PREROUTING -p tcp --dport 80 -i $INTERFACE_NAME -j DNAT \
+--to $DEST_IP:$DEST_PORT
+
+Things you change yourself are prefixed with $'s this time to distinguish from
+literal ALLCAPS arguments.
+
+P.S. if you didn't notice, there's a Makefile to build arp.c with the correct
+options.

