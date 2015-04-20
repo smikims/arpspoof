@@ -32,6 +32,9 @@ Syntax:
 
 ./sweep.sh INTERFACE_NAME [ -p (ping only) ]
 
+cage.sh is a simple URL rewriter script for Squid--it just takes any URL and
+turns it into a picture of Nicolas Cage.
+
 There are also some other relevant things, for example the sample website is
 available under the http directory, and the Apache and Squid configuration files
 are here as well. And one more thing that doesn't really fit neatly anywhere
