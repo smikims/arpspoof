@@ -14,11 +14,14 @@ The arpspoof.c file sends 2 ARP requests, one to the default gateway and one to 
 -i, --interface		Network interface to use, given as the argument. If this
                     option is not used, the interface defaults to the first
 					running non-loopback interface.
+
 -r, --repeat		Resends the packet continuously with a delay given in
                     seconds by the argument. A delay of zero means only one
 					packet is sent.
+
 -s, --spoof-ip		Spoof to an IP (given as an argument) other than the default
                     gateway.
+
 -v, --verbose		Prints out extra info about the machines' MAC addresses.
 
 #sweep.sh
