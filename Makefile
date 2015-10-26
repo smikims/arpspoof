@@ -1,8 +1,11 @@
-SRC=arp.c
-OUT=arp
+SRC=arpspoof.c
+OUT=arpspoof
 CFLAGS=-Wall -Wextra -Wpedantic -std=gnu99
 
-all:
-	$(CC) $(CFLAGS) -o $(OUT) $(SRC)
+all:	$(OUT)
+
+$(OUT):	$(SRC)
+	$(CC) $(CFLAGS) -o $@ $?
+
 clean:
 	$(RM) $(OUT)
