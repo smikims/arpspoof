@@ -225,6 +225,15 @@ void arp_spoof(int fd, const char *if_name,
 	}
 }
 
+void print_help(char argv0[]) {
+	printf("Usage: %s [OPTION [ARG]]... VICTIM_IP\n", argv0);
+	puts("  -i, --interface Network interface to use, given as the argument. If this option is not used, the interface defaults to the first running non-loopback interface.");
+	puts("  -r, --repeat Resends the packet continuously with a delay given in seconds by the argument. A delay of zero means only one packet is sent.");
+	puts("  -a, --attacker-ip Choose another machine (other than the one running this program) as the one to be disguised.");
+	puts("  -g, --gateway-ip Spoof to an IP (given as an argument) other than the default gateway.");
+	puts("  -v, --verbose Prints out extra info about the machines involved.");
+}
+
 int main(int argc, char *argv[])
 {
 	struct ether_arp req;
@@ -284,6 +293,7 @@ int main(int argc, char *argv[])
 			verbose = 1;
 			break;
 		case '?':
+			print_help(argv[0]);
 			break;
 		default:
 			die("Invalid option");
