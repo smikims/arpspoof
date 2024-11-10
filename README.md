@@ -5,11 +5,11 @@ A program to perform an ARP spoofing attack against someone else on your local u
 
 The arpspoof.c file sends 2 ARP requests, one to the default gateway and one to the victim, to get their MAC addresses. I then use these addresses to construct a phony ARP response to the victim that tells them that I am their default gateway (or any other IP address if you don't want it to be the default gateway). Some operating systems (e.g. Linux) are very suspicious of spurious ARP responses like this and will quickly figure out the ruse, but Windows will happily chug along in blissful ignorance until you annoy it by taking too long to respond to requests. To prevent even this weak defense mechanism from deploying, the program has an option to keep resending the phony packet every X number of seconds. Note: if it takes more than about 1 second for something to happen your response probably got lost, so try again.
 
-##Syntax
+## Syntax
 
 ./arpspoof [OPTION [ARG]]... VICTIM_IP
 
-##Options
+## Options
 
 -i, --interface		Network interface to use, given as the argument. If this
                     option is not used, the interface defaults to the first
@@ -27,7 +27,7 @@ The arpspoof.c file sends 2 ARP requests, one to the default gateway and one to 
 
 -v, --verbose		Prints out extra info about the machines involved.
 
-#sweep.sh
+# sweep.sh
 
 The sweep.sh file gets the current IP address and routing prefix in CIDR
 notation and from this calculates the netmask, then uses this information to
@@ -40,16 +40,16 @@ fashion to the ping from the tcping program (not mine) on port 6000. For some
 reason I was unable to determine, Windows responds to random TCP connections on
 port 6000 but firewalls almost everything else, including ICMP. Go figure.
 
-##Syntax
+## Syntax
 
 ./sweep.sh INTERFACE_NAME [ -p (ping only) ]
 
-#cage.sh
+# cage.sh
 
 cage.sh is a simple URL rewriter script for Squid--it just takes any URL and
 turns it into a picture of Nicolas Cage.
 
-#Miscellaneous
+# Miscellaneous
 
 There are also some other relevant things, for example the sample website is
 available under the http directory, and the Apache and Squid configuration files
@@ -71,7 +71,7 @@ iptables -t nat -A PREROUTING -p tcp --dport 80 -i $INTERFACE_NAME -j DNAT \
 Things you change yourself are prefixed with $'s this time to distinguish from
 literal ALLCAPS arguments.
 
-#Notes
+# Notes
 
 This project was originally written for my networking class last semester, but
 since a few other people seem to be interested in it I've been cleaning it up a
